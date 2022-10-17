@@ -5,7 +5,9 @@ Consumir la API https://test-algobalanz.herokuapp.com/ en sus diferentes endpoin
 # Detalles de la API
 
 En https://test-algobalanz.herokuapp.com/api/v1/prices/security_id se encuentra el listado de todos los SecurityIDs disponibles en la API.
+
 En https://test-algobalanz.herokuapp.com/api/v1/prices se encuentra el detalle de todos los SecurityIDs disponibles en la API al momento de la consulta.
+
 En https://test-algobalanz.herokuapp.com/api/v1/prices/security_id/{security_id} se encuentra el detalle del SecurityID seleccionado al momento de la consulta (reemplazar {security_id} por alguno de los disponibles en el listado)
 
 # Detalles del Websocket
