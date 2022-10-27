@@ -5,152 +5,212 @@ import (
 	"fmt"
 	"github.com/Big-Sh4rk/Balanz-Project/internal/model"
 	"io/ioutil"
+	"math"
 	"net/http"
-	"os"
+	"sort"
 )
 
 const (
-	ars   = "ARS"
-	usd   = "USD"
-	ext   = "EXT"
-	mep   = "MEP"
-	cable = "CABLE"
+	ars          = "ARS"
+	usd          = "USD"
+	ext          = "EXT"
+	firstEndUrl  = "https://test-algobalanz.herokuapp.com/api/v1/prices/security_id"
+	secondEndUrl = "https://test-algobalanz.herokuapp.com/api/v1/prices"
+	thirdEndUrl  = "https://test-algobalanz.herokuapp.com/api/v1/prices/security_id/"
+	socket       = "wss://test-algobalanz.herokuapp.com/ws/"
 )
 
-var urls = [...]string{"https://test-algobalanz.herokuapp.com/api/v1/prices/security_id", "https://test-algobalanz.herokuapp.com/api/v1/prices", "https://test-algobalanz.herokuapp.com/api/v1/prices/security_id/"}
-
 func ConsumeAPI() error {
-	err := endpoints()
-	return checkError(err)
-}
 
-//Este metodo debo convertirlo en un pointer reciver para poder trabajar con formatos json no declarados como struct
-func endpoints() error {
-
+	//Primer Endpoint de la API
 	errFirst := firstEndPoint()
-	if errFirst != nil {
-		fmt.Print(errFirst.Error())
+	if isErrorNotNil(errFirst) {
 		return errFirst
 	}
-	//Primer Endpoint de la API
 
 	//Segundo Endpoint de la API
+	errSecond := secondEndPoint()
+	if isErrorNotNil(errSecond) {
+		return errSecond
+	}
 
-	/*
-		response, errFirst := http.Get("https://test-algobalanz.herokuapp.com/api/v1/prices/")
-		return checkError(errFirst)
-
-		responseData, errRead := ioutil.ReadAll(response.Body)
-		return checkError(errRead)
-	*/
-
-	//Tercer Endpoint de la API
+	//El tercer endpoint es utilizado con los valores obtenidos en el primer endpoint
 
 	return nil
 }
 
 func firstEndPoint() error {
 
-	dataMap := make(map[string]string)
-	var dataArray []string
-	response, err := http.Get("https://test-algobalanz.herokuapp.com/api/v1/prices/security_id")
+	response, err := http.Get(firstEndUrl)
 	defer response.Body.Close()
 
-	if err != nil {
-		fmt.Print(err.Error())
+	if isErrorNotNil(err) {
+		return err
 	}
 
-	data, err := ioutil.ReadAll(response.Body)
-
-	err = json.Unmarshal(data, &dataMap)
-	if err != nil {
-		fmt.Println(err)
+	body, errRead := ioutil.ReadAll(response.Body)
+	if isErrorNotNil(errRead) {
+		return errRead
+	}
+	var ids model.SecurityIDs
+	errJson := json.Unmarshal(body, &ids)
+	if isErrorNotNil(errJson) {
+		return errJson
 	}
 
-	for _, value := range dataMap {
-		dataArray = append(dataArray, value)
-	}
-
-	for securityId := range dataArray {
-		fmt.Println(securityId)
-	}
+	thirdEndPoint(ids.Response)
 
 	return nil
 }
 
 func secondEndPoint() error {
 
-	/*
-		response, err := http.Get("https://test-algobalanz.herokuapp.com/api/v1/prices/")
-
-		if err != nil {
-			return err
-			os.Exit(1)
-		}
-
-		responseData, err := ioutil.ReadAll(response.Body)
-		if err != nil {
-			return err
-		}
-
-		var responseObject Response
-		err = json.Unmarshal(responseData, &responseObject)
-		if err != nil {
-			return err
-		}
-		fmt.Println(responseObject.AL30C0001CCTEXT)
-	*/
-	return nil
-}
-
-func thirdEndPoint() error {
-	return nil
-}
-
-func calcularDolar(instrument1, instrument2 model.FinancialInstrument, dolarType string) {
-
-	// Validamos que sean del mismo instrumento
-	if sameStringValue(instrument1.Symbol, instrument2.Symbol) {
-		// Validamos el plazo y el tipo de concurrencia de cada uno
-		if sameStringValue(instrument1.SettlementType, instrument2.SettlementType) && isCurrencyCorrect(instrument1.Currency, instrument2.Currency, dolarType) {
-			pesos := instrument1.Last.Price
-			if dolarType == mep {
-				dolares := instrument2.Last.Price
-				mep := pesos / dolares
-				fmt.Printf("Dolar Mep del instrumento %s, valor %f\n", instrument1.Symbol, mep)
-			} else {
-				exts := instrument2.Last.Price
-				cable := pesos / exts
-				fmt.Printf("Dolar Cable del instrumento %s, valor %f\n", instrument1.Symbol, cable)
-			}
-
-		}
-	} else {
-		fmt.Println("Invalid Instrument")
-	}
-
-}
-
-func sameStringValue(str1, str2 string) bool {
-	return str1 == str2
-}
-
-func isCurrencyCorrect(currency1, currency2, dolar string) bool {
-
-	switch dolar {
-	case mep:
-		return currency1 == ars && currency2 == usd
-	case cable:
-		return currency1 == ars && currency2 == ext
-	default:
-		return false
-	}
-}
-
-func checkError(err error) error {
-	if err != nil {
+	response, err := http.Get(secondEndUrl)
+	defer response.Body.Close()
+	if isErrorNotNil(err) {
 		return err
-		os.Exit(1)
 	}
+
+	instruments, errConv := mapToFinancialInstrument(response)
+	if isErrorNotNil(errConv) {
+		return errConv
+	}
+
+	fmt.Println("Calculando Dollars con el segundo endpoint")
+	fmt.Println("")
+	calcularDolar(instruments)
+
 	return nil
+}
+
+//En este endpoint usaremos la lista de security_id conseguidos en el primer metodo, calcularemos los respectivos dolares
+func thirdEndPoint(ids []string) error {
+
+	var instruments []model.FinancialInstrument
+	for _, id := range ids {
+		response, err := http.Get(thirdEndUrl + id)
+		if isErrorNotNil(err) {
+			return err
+		}
+		body, errRead := ioutil.ReadAll(response.Body)
+		if isErrorNotNil(errRead) {
+			return errRead
+		}
+		var in model.NewInstrument
+		errJson := json.Unmarshal(body, &in)
+		if isErrorNotNil(errJson) {
+			return errJson
+		}
+		instruments = append(instruments, in.Response)
+		defer response.Body.Close()
+	}
+
+	fmt.Println("Calculando Dollars con el tercer endpoint")
+	fmt.Println("")
+	calcularDolar(instruments)
+
+	return nil
+}
+
+func calcularDolar(instruments []model.FinancialInstrument) {
+
+	//Ordenamos los instrumentos
+	fmt.Println("ORDENANDO LISTA")
+	sort.Slice(instruments, func(i, j int) bool {
+		return instruments[i].SecurityID < instruments[j].SecurityID
+	})
+	/*
+		OPCIONAL SOLO APLICA A LA API:
+		Imprimo los SecurityIDs ordenados para que se vea en consola que los valores respectivos(Instrumento y settlementType)
+		son distintos o la Currency como tal es la misma, por ende no llego a calcular ningun tipo de dolar. Para probarlo pueden descomentar
+		el bucle de abajo.
+
+		for _, ins := range instruments {
+			fmt.Println(ins.SecurityID)
+		}*/
+	fmt.Println("---------------")
+
+	max := len(instruments)
+	for i := 0; i < max; i++ {
+		for j := i + 1; j < max; j++ {
+			if sameInstrument(instruments[i].Symbol, instruments[j].Symbol) && sameST(instruments[i].SettlementType, instruments[j].SettlementType) {
+				if isCurrencyMEP(instruments[i].Currency, instruments[j].Currency) {
+					dolarMep(instruments[i], instruments[j])
+				} else if isCurrencyCABLE(instruments[i].Currency, instruments[j].Currency) {
+					dolarCable(instruments[i], instruments[j])
+				}
+			}
+		}
+	}
+	fmt.Println("SE TERMINO DE RECORRER LA LISTA")
+}
+
+func dolarMep(instrumentARS, instrumentUSD model.FinancialInstrument) {
+	valueARS := instrumentARS.Last.Price
+	valueUSD := instrumentUSD.Last.Price
+	mep := valueARS / valueUSD
+	if math.IsNaN(mep) {
+		fmt.Println("Resultado negativo")
+	} else {
+		fmt.Printf("Dolar Mep del instrumento %s, valor %f\n", instrumentARS.Symbol, mep)
+	}
+}
+
+func dolarCable(instrumentARS, instrumentEXT model.FinancialInstrument) {
+	valueARS := instrumentARS.Last.Price
+	valueEXT := instrumentEXT.Last.Price
+	cable := valueARS / valueEXT
+	if math.IsNaN(cable) {
+		fmt.Println("Resultado negativo")
+	} else {
+		fmt.Printf("Dolar Cable del instrumento %s, valor %f\n", instrumentARS.Symbol, cable)
+	}
+}
+
+//En ambas funciones comparo strings, lo hice de esta forma para una mejor lectura de codigo
+func sameInstrument(fInstrument, sInstrument string) bool {
+	return fInstrument == sInstrument
+}
+
+func sameST(firstST, secondST string) bool {
+	return firstST == secondST
+}
+
+func isCurrencyMEP(firstCur, secondCur string) bool {
+	return firstCur == ars && secondCur == usd
+}
+
+func isCurrencyCABLE(firstCur, secondCur string) bool {
+	return firstCur == ars && secondCur == ext
+}
+
+func isErrorNotNil(err error) bool {
+	if err != nil {
+		fmt.Print(err.Error())
+		return true
+	}
+	return false
+}
+
+//En esta funcion trabajo con Unstructured Data, para luego pasarlo a una lista de una struct ya predefinida
+func mapToFinancialInstrument(response *http.Response) ([]model.FinancialInstrument, error) {
+
+	var newInstruments []model.FinancialInstrument
+	var dataMap map[string]model.FinancialInstrument
+
+	body, errRead := ioutil.ReadAll(response.Body)
+	if isErrorNotNil(errRead) {
+		return nil, errRead
+	}
+
+	errJson := json.Unmarshal(body, &dataMap)
+	if isErrorNotNil(errJson) {
+		return nil, errJson
+	}
+
+	for _, value := range dataMap {
+		newInstruments = append(newInstruments, value)
+	}
+
+	return newInstruments, nil
 }
