@@ -59,8 +59,10 @@ func ConsumeSocket() error {
 			//Lo agregamos a la lista
 			instruments = append(instruments, instrument)
 			//Eliminamos valores viejos con la intencion de mejorar significativamente el rendimiento
-			instruments = removeOldValues(instruments)
-			calcularDolar(instruments)
+			if len(instruments) > 2 {
+				instruments = removeOldValues(instruments)
+				calcularDolar(instruments)
+			}
 		}
 	}()
 
@@ -232,10 +234,6 @@ func byteToInstrument(response []byte) model.FinancialInstrument {
 }
 
 func removeOldValues(instruments []model.FinancialInstrument) []model.FinancialInstrument {
-
-	if len(instruments) < 2 {
-		return instruments
-	}
 
 	instruments = sortInstruments(instruments)
 
