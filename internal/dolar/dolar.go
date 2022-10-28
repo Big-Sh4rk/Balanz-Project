@@ -1,12 +1,15 @@
 package dolar
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"github.com/Big-Sh4rk/Balanz-Project/internal/model"
+	"github.com/gorilla/websocket"
 	"io/ioutil"
-	"math"
+	"log"
 	"net/http"
+	"os"
 	"sort"
 )
 
@@ -17,46 +20,72 @@ const (
 	firstEndUrl  = "https://test-algobalanz.herokuapp.com/api/v1/prices/security_id"
 	secondEndUrl = "https://test-algobalanz.herokuapp.com/api/v1/prices"
 	thirdEndUrl  = "https://test-algobalanz.herokuapp.com/api/v1/prices/security_id/"
-	socket       = "wss://test-algobalanz.herokuapp.com/ws/"
+	socketUri    = "wss://test-algobalanz.herokuapp.com/ws/example"
 )
 
-func ConsumeAPI() error {
+func ConsumeAPI() {
 
+	fmt.Println("Consumiendo API...")
+	fmt.Println("")
 	//Primer Endpoint de la API
 	errFirst := firstEndPoint()
-	if isErrorNotNil(errFirst) {
-		return errFirst
-	}
+	isErrorNotNil(errFirst)
 
 	//Segundo Endpoint de la API
 	errSecond := secondEndPoint()
-	if isErrorNotNil(errSecond) {
-		return errSecond
-	}
+	isErrorNotNil(errSecond)
 
 	//El tercer endpoint es utilizado con los valores obtenidos en el primer endpoint
+
+}
+
+func ConsumeSocket() error {
+
+	c, _, err := websocket.DefaultDialer.Dial(socketUri, nil)
+	isErrorNotNil(err)
+	defer c.Close()
+
+	var instruments []model.FinancialInstrument
+
+	// Recivimos mensajes
+	go func() {
+		log.Println("")
+		log.Println("Consumiendo Socket...")
+		log.Println("")
+		for {
+			_, message, _ := c.ReadMessage()
+			//Se transforma el valor al instrumento deseado
+			instrument := byteToInstrument(message)
+			//Lo agregamos a la lista
+			instruments = append(instruments, instrument)
+			//Eliminamos valores viejos con la intencion de mejorar significativamente el rendimiento
+			instruments = removeOldValues(instruments)
+			calcularDolar(instruments)
+		}
+	}()
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		_ = c.WriteMessage(websocket.TextMessage, []byte(scanner.Text()))
+		log.Printf("Scan: %s", scanner.Text())
+	}
 
 	return nil
 }
 
 func firstEndPoint() error {
-
+	fmt.Println("Extrayendo los Security_id")
 	response, err := http.Get(firstEndUrl)
 	defer response.Body.Close()
 
-	if isErrorNotNil(err) {
-		return err
-	}
+	isErrorNotNil(err)
 
 	body, errRead := ioutil.ReadAll(response.Body)
-	if isErrorNotNil(errRead) {
-		return errRead
-	}
+	isErrorNotNil(errRead)
+
 	var ids model.SecurityIDs
 	errJson := json.Unmarshal(body, &ids)
-	if isErrorNotNil(errJson) {
-		return errJson
-	}
+	isErrorNotNil(errJson)
 
 	thirdEndPoint(ids.Response)
 
@@ -64,20 +93,12 @@ func firstEndPoint() error {
 }
 
 func secondEndPoint() error {
-
+	fmt.Println("Obteniendo todos los instrumentos disponibles en el 2do endpoint")
 	response, err := http.Get(secondEndUrl)
 	defer response.Body.Close()
-	if isErrorNotNil(err) {
-		return err
-	}
+	isErrorNotNil(err)
 
-	instruments, errConv := mapToFinancialInstrument(response)
-	if isErrorNotNil(errConv) {
-		return errConv
-	}
-
-	fmt.Println("Calculando Dollars con el segundo endpoint")
-	fmt.Println("")
+	instruments := mapToFinancialInstrument(response)
 	calcularDolar(instruments)
 
 	return nil
@@ -85,132 +106,155 @@ func secondEndPoint() error {
 
 //En este endpoint usaremos la lista de security_id conseguidos en el primer metodo, calcularemos los respectivos dolares
 func thirdEndPoint(ids []string) error {
-
+	fmt.Println("Tercer Endpoint")
+	fmt.Println("Obteniendo los Instrumentos con los security_ids obtenidos en el primer endpoint")
 	var instruments []model.FinancialInstrument
 	for _, id := range ids {
 		response, err := http.Get(thirdEndUrl + id)
-		if isErrorNotNil(err) {
-			return err
-		}
+		isErrorNotNil(err)
+
 		body, errRead := ioutil.ReadAll(response.Body)
-		if isErrorNotNil(errRead) {
-			return errRead
-		}
+		isErrorNotNil(errRead)
+
 		var in model.NewInstrument
 		errJson := json.Unmarshal(body, &in)
-		if isErrorNotNil(errJson) {
-			return errJson
-		}
+		isErrorNotNil(errJson)
+
 		instruments = append(instruments, in.Response)
 		defer response.Body.Close()
 	}
 
-	fmt.Println("Calculando Dollars con el tercer endpoint")
-	fmt.Println("")
 	calcularDolar(instruments)
-
 	return nil
 }
 
 func calcularDolar(instruments []model.FinancialInstrument) {
 
-	//Ordenamos los instrumentos
-	fmt.Println("ORDENANDO LISTA")
-	sort.Slice(instruments, func(i, j int) bool {
-		return instruments[i].SecurityID < instruments[j].SecurityID
-	})
-	/*
-		OPCIONAL SOLO APLICA A LA API:
-		Imprimo los SecurityIDs ordenados para que se vea en consola que los valores respectivos(Instrumento y settlementType)
-		son distintos o la Currency como tal es la misma, por ende no llego a calcular ningun tipo de dolar. Para probarlo pueden descomentar
-		el bucle de abajo.
-
-		for _, ins := range instruments {
-			fmt.Println(ins.SecurityID)
-		}*/
-	fmt.Println("---------------")
+	instruments = sortInstruments(instruments)
 
 	max := len(instruments)
 	for i := 0; i < max; i++ {
+		fIns := instruments[i]
 		for j := i + 1; j < max; j++ {
-			if sameInstrument(instruments[i].Symbol, instruments[j].Symbol) && sameST(instruments[i].SettlementType, instruments[j].SettlementType) {
-				if isCurrencyMEP(instruments[i].Currency, instruments[j].Currency) {
-					dolarMep(instruments[i], instruments[j])
-				} else if isCurrencyCABLE(instruments[i].Currency, instruments[j].Currency) {
-					dolarCable(instruments[i], instruments[j])
-				}
+			sIns := instruments[j]
+			if !sameInstrument(fIns.Symbol, sIns.Symbol) || !sameST(fIns.SettlementType, sIns.SettlementType) || !diferentCurrency(fIns.Currency, sIns.Currency) {
+				continue
 			}
+
+			values := mapWithData(fIns.Currency, fIns.Last.Price, sIns.Currency, sIns.Last.Price)
+			checkingTypeDolar(values, substractIns(fIns.Symbol))
+
 		}
 	}
-	fmt.Println("SE TERMINO DE RECORRER LA LISTA")
 }
 
-func dolarMep(instrumentARS, instrumentUSD model.FinancialInstrument) {
-	valueARS := instrumentARS.Last.Price
-	valueUSD := instrumentUSD.Last.Price
-	mep := valueARS / valueUSD
-	if math.IsNaN(mep) {
-		fmt.Println("Resultado negativo")
-	} else {
-		fmt.Printf("Dolar Mep del instrumento %s, valor %f\n", instrumentARS.Symbol, mep)
+func mapWithData(firstCur string, firstPrice float64, secondCur string, secondPrice float64) map[string]float64 {
+	data := make(map[string]float64)
+	data[firstCur] = firstPrice
+	data[secondCur] = secondPrice
+	return data
+}
+
+func checkingTypeDolar(data map[string]float64, instrument string) {
+	peso, isArs := data[ars]
+	dolarU, isUsd := data[usd]
+	dolarE, isExt := data[ext]
+	//La validacion de los numeros es para evitar que me de un resultado que tienda a infinito.
+	if isArs && isUsd && peso != 0.0 && dolarU != 0.0 {
+		dolarMep(instrument, peso, dolarU)
+	}
+	if isArs && isExt && peso != 0.0 && dolarE != 0.0 {
+		dolarCable(instrument, peso, dolarE)
 	}
 }
 
-func dolarCable(instrumentARS, instrumentEXT model.FinancialInstrument) {
-	valueARS := instrumentARS.Last.Price
-	valueEXT := instrumentEXT.Last.Price
-	cable := valueARS / valueEXT
-	if math.IsNaN(cable) {
-		fmt.Println("Resultado negativo")
-	} else {
-		fmt.Printf("Dolar Cable del instrumento %s, valor %f\n", instrumentARS.Symbol, cable)
-	}
+func dolarMep(instrument string, peso, dolar float64) {
+
+	result := peso / dolar
+	fmt.Printf("Dolar MEP %s: %.2f\n", instrument, result)
 }
 
-//En ambas funciones comparo strings, lo hice de esta forma para una mejor lectura de codigo
+func dolarCable(instrument string, peso, dolar float64) {
+
+	result := peso / dolar
+	fmt.Printf("Dolar Cable %s: %.2f\n", instrument, result)
+}
+
 func sameInstrument(fInstrument, sInstrument string) bool {
-	return fInstrument == sInstrument
+	//Hago estas comparaciones ya que existen instrumentos que tienen un caracter extra
+	return substractIns(fInstrument) == substractIns(sInstrument)
+}
+
+func substractIns(instrument string) string {
+	return instrument[0:4]
 }
 
 func sameST(firstST, secondST string) bool {
 	return firstST == secondST
 }
 
-func isCurrencyMEP(firstCur, secondCur string) bool {
-	return firstCur == ars && secondCur == usd
+func diferentCurrency(firstCur, secondCur string) bool {
+	return firstCur != secondCur
 }
 
-func isCurrencyCABLE(firstCur, secondCur string) bool {
-	return firstCur == ars && secondCur == ext
-}
-
-func isErrorNotNil(err error) bool {
+func isErrorNotNil(err error) {
 	if err != nil {
-		fmt.Print(err.Error())
-		return true
+		log.Fatal(err)
 	}
-	return false
 }
 
 //En esta funcion trabajo con Unstructured Data, para luego pasarlo a una lista de una struct ya predefinida
-func mapToFinancialInstrument(response *http.Response) ([]model.FinancialInstrument, error) {
+func mapToFinancialInstrument(response *http.Response) []model.FinancialInstrument {
 
 	var newInstruments []model.FinancialInstrument
-	var dataMap map[string]model.FinancialInstrument
+	dataMap := make(map[string]model.FinancialInstrument)
 
 	body, errRead := ioutil.ReadAll(response.Body)
-	if isErrorNotNil(errRead) {
-		return nil, errRead
-	}
+	isErrorNotNil(errRead)
 
 	errJson := json.Unmarshal(body, &dataMap)
-	if isErrorNotNil(errJson) {
-		return nil, errJson
-	}
+	isErrorNotNil(errJson)
 
 	for _, value := range dataMap {
 		newInstruments = append(newInstruments, value)
 	}
 
-	return newInstruments, nil
+	return newInstruments
+}
+
+func byteToInstrument(response []byte) model.FinancialInstrument {
+
+	socketIns := model.SocketInstrument{}
+	err := json.Unmarshal(response, &socketIns)
+	isErrorNotNil(err)
+
+	return socketIns.Msg
+}
+
+func removeOldValues(instruments []model.FinancialInstrument) []model.FinancialInstrument {
+
+	if len(instruments) < 2 {
+		return instruments
+	}
+
+	instruments = sortInstruments(instruments)
+
+	uniqPointer := 0
+
+	for i := 1; i < len(instruments); i++ {
+		if instruments[uniqPointer].SecurityID != instruments[i].SecurityID {
+			uniqPointer++
+			instruments[uniqPointer] = instruments[i]
+		}
+	}
+
+	return instruments[:uniqPointer+1]
+}
+
+func sortInstruments(instruments []model.FinancialInstrument) []model.FinancialInstrument {
+	//Ordenamos los instrumentos
+	sort.Slice(instruments, func(i, j int) bool {
+		return instruments[i].SecurityID < instruments[j].SecurityID
+	})
+	return instruments
 }

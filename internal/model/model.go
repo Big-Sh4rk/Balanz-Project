@@ -1,5 +1,10 @@
 package model
 
+type SocketInstrument struct {
+	Type string `json:"type"`
+	Msg  FinancialInstrument
+}
+
 type SecurityIDs struct {
 	Response []string
 }

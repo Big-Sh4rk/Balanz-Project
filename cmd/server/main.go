@@ -98,11 +98,11 @@ func main() {
 		done <- true
 	}()
 
-	//Prueba de consumir la API
-	err := dolar.ConsumeAPI()
-	if err != nil {
-		log.Fatal(err)
-	}
+	//Consumo de la API
+	dolar.ConsumeAPI()
+
+	//Consumo del WebSocket
+	dolar.ConsumeSocket()
 
 	//esperar apagado
 	server.WaitShutdown()
